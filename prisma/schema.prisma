@@ -1,0 +1,221 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  OWNER
+  ADMIN
+  VIEWER
+}
+
+enum RequestStatus {
+  PENDING
+  CONFIRMED
+  RESCHEDULE_PROPOSED
+  REJECTED
+  CANCELLED
+  COMPLETED
+  NO_SHOW
+}
+
+enum RequestSource {
+  YCLOUD_AI
+  MANUAL
+  OTHER
+}
+
+enum MessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum MessageStatus {
+  SENT
+  DELIVERED
+  READ
+  FAILED
+  SEND_FAILED
+}
+
+model User {
+  id           String   @id @default(cuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  role         UserRole @default(VIEWER)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  assignedRequests ConsultationRequest[] @relation("AssignedAdmin")
+  statusChanges    RequestStatusHistory[]
+  auditLogs        AuditLog[]
+  notifications    Notification[]
+
+  @@index([email])
+}
+
+model Patient {
+  id                String   @id @default(cuid())
+  fullName          String
+  phone             String
+  normalizedPhone   String   @unique
+  whatsappId        String?
+  dateOfBirth       String?
+  district          String?
+  preferredLanguage String?  @default("ru")
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  consultationRequests ConsultationRequest[]
+  whatsappLogs         WhatsAppMessageLog[]
+
+  @@index([normalizedPhone])
+}
+
+model ConsultationRequest {
+  id                        String        @id @default(cuid())
+  externalRequestId         String?       @unique
+  patientId                 String
+  service                   String
+  complaint                 String?
+  missingTeethCount         Int?
+  jaw                       String?
+  missingDuration           String?
+  rootsRemaining            Boolean?
+  district                  String?
+  preferredDate             String?
+  preferredTime             String?
+  preferredDateTime         DateTime?
+  status                    RequestStatus @default(PENDING)
+  source                    RequestSource @default(YCLOUD_AI)
+  ycloudConversationId      String?
+  ycloudContactId           String?
+  assignedAdminId           String?
+  internalComment           String?
+  rejectionReason           String?
+  rescheduleSuggestedDateTime DateTime?
+  version                   Int           @default(0)
+  createdAt                 DateTime      @default(now())
+  updatedAt                 DateTime      @updatedAt
+  confirmedAt               DateTime?
+  rejectedAt                DateTime?
+  cancelledAt               DateTime?
+
+  patient       Patient                @relation(fields: [patientId], references: [id])
+  assignedAdmin User?                  @relation("AssignedAdmin", fields: [assignedAdminId], references: [id])
+  statusHistory RequestStatusHistory[]
+  messageLogs   WhatsAppMessageLog[]
+
+  @@index([status])
+  @@index([patientId])
+  @@index([createdAt])
+  @@index([preferredDateTime])
+}
+
+model RequestStatusHistory {
+  id                    String        @id @default(cuid())
+  consultationRequestId String
+  previousStatus        RequestStatus?
+  newStatus             RequestStatus
+  changedByUserId       String?
+  source                String?
+  comment               String?
+  createdAt             DateTime      @default(now())
+
+  consultationRequest ConsultationRequest @relation(fields: [consultationRequestId], references: [id])
+  changedBy           User?               @relation(fields: [changedByUserId], references: [id])
+
+  @@index([consultationRequestId])
+}
+
+model WhatsAppMessageLog {
+  id                    String           @id @default(cuid())
+  consultationRequestId String?
+  patientId             String?
+  direction             MessageDirection
+  messageType           String           @default("text")
+  messageText           String?
+  ycloudMessageId       String?
+  externalId            String?
+  status                MessageStatus    @default(SENT)
+  errorCode             String?
+  errorMessage          String?
+  requestPayload        Json?
+  responsePayload       Json?
+  createdAt             DateTime         @default(now())
+  updatedAt             DateTime         @updatedAt
+
+  consultationRequest ConsultationRequest? @relation(fields: [consultationRequestId], references: [id])
+  patient             Patient?             @relation(fields: [patientId], references: [id])
+
+  @@index([consultationRequestId])
+  @@index([patientId])
+}
+
+model IdempotencyRecord {
+  id             String   @id @default(cuid())
+  key            String
+  endpoint       String
+  requestHash    String?
+  responseStatus Int
+  responseBody   Json
+  createdAt      DateTime @default(now())
+  expiresAt      DateTime
+
+  @@unique([key, endpoint])
+  @@index([expiresAt])
+}
+
+model IntegrationConfig {
+  id                      String   @id @default(cuid())
+  provider                String   @default("ycloud")
+  ycloudApiKeyEncrypted   String?
+  ycloudBusinessPhone     String?
+  inboundSecretHash       String?
+  webhookSecretEncrypted  String?
+  isActive                Boolean  @default(false)
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  @@unique([provider])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String?
+  action     String
+  entityType String?
+  entityId   String?
+  metadata   Json?
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([entityType, entityId])
+  @@index([createdAt])
+}
+
+model Notification {
+  id        String    @id @default(cuid())
+  userId    String
+  type      String
+  title     String
+  message   String
+  entityId  String?
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, readAt])
+  @@index([createdAt])
+}
